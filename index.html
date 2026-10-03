@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>JARVIS System - Mark II Dashboard</title>
+  <!-- MediaPipe für Handtracking -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <!-- Puter.js KI-Bibliothek -->
+  <script src="https://js.puter.com/v2/"></script>
+  <!-- Chart.js für Live-Krypto-Charts -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Three.js für 3D Hologramm -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      background-color: #030813;
+      color: #00f0ff;
+      font-family: 'Courier New', monospace;
+      overflow: hidden;
+    }
+    .hud-container {
+      display: flex;
+      justify-content: space-between;
+      padding: 20px;
+      height: 85vh;
+      position: relative;
+    }
+    .box {
+      border: 2px solid #00f0ff;
+      box-shadow: 0 0 15px #00f0ff;
+      padding: 12px;
+      width: 28%;
+      border-radius: 8px;
+      background: rgba(0, 15, 30, 0.75);
+      display: flex;
+      flex-direction: column;
+      z-index: 2;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+      max-height: 82vh;
+      overflow-y: auto;
+    }
+    .box.active-widget {
+      transform: scale(1.03);
+      border-color: #00ff66;
+      box-shadow: 0 0 30px #00ff66;
+    }
+
+    .center-sphere {
+      width: 30%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    /* 3D Core Container */
+    .core-wrapper {
+      position: absolute;
+      left: 50%;
+      top: 45%;
+      transform: translate(-50%, -50%);
+      width: 220px;
+      height: 220px;
+      z-index: 10;
+      pointer-events: auto;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #three-canvas {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      top: 0;
+      left: 0;
+    }
+
+    /* BLAUER EQUALIZER-KERN */
+    .blue-core {
+      position: absolute;
+      width: 35px;
+      height: 35px;
+      background: radial-gradient(circle, #00ffff 0%, #0088ff 70%, rgba(0, 240, 255, 0) 100%);
+      border-radius: 50%;
+      box-shadow: 0 0 25px #00f0ff, 0 0 40px #0088ff;
+      transition: transform 0.08s ease-in-out;
+      animation: pulseCore 1.5s ease-in-out infinite alternate;
+      z-index: 11;
+    }
+    .blue-core.awake {
+      background: radial-gradient(circle, #aaffcc 0%, #00ff66 70%, rgba(0, 255, 102, 0) 100%);
+      box-shadow: 0 0 25px #00ff66, 0 0 40px #00cc55;
+    }
+
+    .speaking-core {
+      animation: audioWave 0.15s infinite alternate !important;
+    }
+
+    @keyframes pulseCore {
+      0% { transform: scale(0.85); box-shadow: 0 0 15px #00f0ff; }
+      100% { transform: scale(1.15); box-shadow: 0 0 35px #0088ff; }
+    }
+
+    @keyframes audioWave {
+      0% { transform: scale(0.6); box-shadow: 0 0 10px #0088ff; }
+      50% { transform: scale(1.4); box-shadow: 0 0 45px #00ffff, 0 0 60px #0088ff; }
+      100% { transform: scale(0.9); box-shadow: 0 0 20px #00ffff; }
+    }
+
+    h2 { text-shadow: 0 0 10px #00f0ff; margin-top: 0; font-size: 1.05em; }
+
+    /* Spiegelung nur für die Webcam, nicht für Chart oder 3D-Canvas */
+    .video-wrapper {
+      position: relative;
+      width: 100%;
+    }
+    .video-wrapper video,
+    .video-wrapper canvas {
+      width: 100%;
+      height: auto;
+      border-radius: 5px;
+      transform: scaleX(-1);
+    }
+    .video-wrapper canvas#output_canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    .widget-box {
+      margin-top: 8px;
+      border-top: 1px dashed #00f0ff;
+      padding-top: 6px;
+    }
+    .btn-mic {
+      background: rgba(0, 240, 255, 0.2);
+      border: 2px solid #00f0ff;
+      color: #00f0ff;
+      padding: 12px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-family: 'Courier New', monospace;
+      font-weight: bold;
+      margin-top: 250px;
+      box-shadow: 0 0 15px #00f0ff;
+      width: 100%;
+      pointer-events: auto;
+    }
+    .btn-mic:hover {
+      background: #00f0ff;
+      color: #030813;
+    }
+    .heard-text {
+      font-size: 0.8em;
+      color: #ffcc00;
+      word-break: break-all;
+      margin-top: 2px;
+    }
+    .chart-container {
+      width: 100%;
+      height: 90px;
+      margin-top: 5px;
+    }
+
+    .ticker-wrap {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background: rgba(0, 10, 25, 0.9);
+      border-top: 1px solid #00f0ff;
+      overflow: hidden;
+      height: 30px;
+      line-height: 30px;
+      z-index: 100;
+    }
+    .ticker-move {
+      display: inline-block;
+      white-space: nowrap;
+      padding-left: 100%;
+      animation: ticker 25s linear infinite;
+      color: #00f0ff;
+      font-size: 0.9em;
+    }
+    @keyframes ticker {
+      0% { transform: translate3d(0, 0, 0); }
+      100% { transform: translate3d(-100%, 0, 0); }
+    }
+    .memory-list, .postit-list, .timer-list {
+      font-size: 0.78em;
+      color: #00ff66;
+      max-height: 60px;
+      overflow-y: auto;
+      margin-top: 3px;
+      padding-left: 12px;
+    }
+    .postit-list {
+      color: #ffcc00;
+      max-height: 120px;
+    }
+    .timer-list { color: #ff9955; }
+    .tools-list {
+      font-size: 0.75em;
+      color: #ffcc00;
+      margin: 2px 0 0 0;
+      padding-left: 12px;
+      line-height: 1.25em;
+    }
+  </style>
+</head>
+<body>
+  <!-- Musik Stream -->
+  <audio id="bg-music" src="https://stream.zeno.fm/f3wvbbqmdg8uv" crossorigin="anonymous" loop></audio>
+
+  <!-- 3D Hologramm Core -->
+  <div id="jarvis-core" class="core-wrapper" onclick="speakStatus()">
+    <canvas id="three-canvas"></canvas>
+    <div id="blue-dot" class="blue-core"></div>
+  </div>
+
+  <div class="hud-container">
+    <!-- Linkes Panel -->
+    <div class="box" id="widget-left">
+      <h2>SYSTEM STATUS</h2>
+      <p style="margin:3px 0;">CLOCK: <span id="live-clock" style="color:#00ff66;">--:--:--</span></p>
+      <p style="margin:3px 0;">DATE: <span id="live-date" style="color:#00ff66;">--.--.----</span> (<span id="day-time-mode" style="color:#ffcc00;">Tag</span>)</p>
+      <p style="margin:3px 0;">HANDS: <span id="hand-status" style="color:#ffcc00;">SEARCHING...</span> | MUSIC: <span id="music-status" style="color:#ff0055;">OFF</span></p>
+      <p style="margin:3px 0;">VOICE: <span id="voice-status" style="color:#ffcc00;">OFFLINE</span> | WAKE: <span id="wake-status" style="color:#ffcc00;">STANDBY</span></p>
+      <p style="margin:3px 0;">HEARD: <span id="heard-txt" class="heard-text">--</span></p>
+
+      <div class="widget-box">
+        <h2>JARVIS CAPABILITIES</h2>
+        <ul class="tools-list">
+          <li>🎤 Erst "Jarvis" sagen, dann der Befehl</li>
+          <li>🕐 "Jarvis, wie spät ist es?" / "welcher Tag?"</li>
+          <li>🍳 "Jarvis, Rezept für [Gericht]" (KI-Rezept)</li>
+          <li>🗑 "Jarvis, Post-its löschen"</li>
+          <li>🎵 "Jarvis, Musik an" / "Timer auf 5 Minuten"</li>
+          <li>🖐 Zeigefinger = Kugel steuern (Widget 1,5 s halten)</li>
+        </ul>
+      </div>
+
+      <div class="widget-box">
+        <h2>ENV MONITOR (AICHACH)</h2>
+        <p style="margin:3px 0;">TEMP: <span id="temp" style="color:#00ff66; font-weight: bold;">-- °C</span></p>
+      </div>
+
+      <div class="widget-box">
+        <h2>TIMER</h2>
+        <ul id="timer-items" class="timer-list">
+          <li>Keine aktiven Timer.</li>
+        </ul>
+      </div>
+
+      <div class="widget-box">
+        <h2>SYSTEM MEMORY</h2>
+        <ul id="memory-items" class="memory-list">
+          <li>Keine aktiven Notizen.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Mittleres Panel -->
+    <div class="center-sphere">
+      <button class="btn-mic" onclick="startListening()">SYSTEM-AUDIO & KI STARTEN</button>
+    </div>
+
+    <!-- Rechtes Panel -->
+    <div class="box" id="widget-right">
+      <h2>LIVE FEED & POST-ITS</h2>
+      <div class="video-wrapper">
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="output_canvas"></canvas>
+      </div>
+
+      <div class="widget-box">
+        <h2>HUD POST-ITS & REZEPTE</h2>
+        <ul id="postit-items" class="postit-list">
+          <li>Keine Notizen/Rezepte hinterlegt.</li>
+        </ul>
+      </div>
+
+      <div class="widget-box">
+        <h2>BINANCE FEED</h2>
+        <p style="margin:3px 0;">SOL: <span id="sol-price" style="color:#00ff66; font-weight: bold;">Lade...</span> | BTC: <span id="btc-price" style="color:#00ff66; font-weight: bold;">Lade...</span></p>
+
+        <div class="chart-container">
+          <canvas id="cryptoChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ticker -->
+  <div class="ticker-wrap">
+    <div class="ticker-move" id="ticker-text">
+      +++ JARVIS MARK-II ONLINE +++ WAKE-WORD "JARVIS" AKTIV +++ INTERACTIVE HUD POST-ITS READY +++
+    </div>
+  </div>
+
+  <script>
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('output_canvas');
+    const ctx = canvas.getContext('2d');
+    const handStatus = document.getElementById('hand-status');
+    const voiceStatus = document.getElementById('voice-status');
+    const wakeStatus = document.getElementById('wake-status');
+    const musicStatus = document.getElementById('music-status');
+    const heardTxt = document.getElementById('heard-txt');
+    const coreWrapper = document.getElementById('jarvis-core');
+    const blueDot = document.getElementById('blue-dot');
+    const bgMusic = document.getElementById('bg-music');
+
+    const widgetLeft = document.getElementById('widget-left');
+    const widgetRight = document.getElementById('widget-right');
+
+    let recognition;
+    let isSpeaking = false;
+    let isListeningActive = false;
+
+    const WAKE_WINDOW = 8000;
+    const WAKE_REGEX = /\b(jarvis|jarwis|dscharvis|charvis|jarviss)\b/;
+    let awakeUntil = 0;
+
+    // --- TIMER SPEICHER & DATEN ---
+    let activeTimers = [];
+
+    function addTimer(minutes, label) {
+      const endTime = Date.now() + minutes * 60 * 1000;
+      activeTimers.push({ endTime, label });
+      speak(`Timer für ${minutes} Minuten (${label}) gestartet, Boss.`);
+      updateTimerUI();
+    }
+
+    function updateTimerUI() {
+      const ul = document.getElementById('timer-items');
+      const now = Date.now();
+      activeTimers = activeTimers.filter(t => t.endTime > now);
+
+      ul.innerHTML = '';
+      if (activeTimers.length === 0) {
+        ul.innerHTML = '<li>Keine aktiven Timer.</li>';
+      } else {
+        activeTimers.forEach(t => {
+          const remainingSec = Math.ceil((t.endTime - now) / 1000);
+          const m = Math.floor(remainingSec / 60);
+          const s = remainingSec % 60;
+          const li = document.createElement('li');
+          li.textContent = `⏱ ${t.label}: ${m}m${s}s verbleibend`;
+          ul.appendChild(li);
+        });
+      }
+    }
+
+    // --- HILFSFUNKTIONEN ---
+    const NUM_WORDS = {
+      eins: 1, ein: 1, eine: 1, einen: 1, zwei: 2, drei: 3, vier: 4, fünf: 5, sechs: 6,
+      sieben: 7, acht: 8, neun: 9, zehn: 10, elf: 11, zwölf: 12, fünfzehn: 15,
+      zwanzig: 20, dreißig: 30, vierzig: 40, fünfundvierzig: 45, fünfzig: 50, sechzig: 60
+    };
+
+    function parseNumber(text) {
+      const m = text.match(/\d+/);
+      if (m) return parseInt(m[0], 10);
+      for (const [word, n] of Object.entries(NUM_WORDS)) {
+        if (new RegExp(`\\b${word}\\b`).test(text)) return n;
+      }
+      return null;
+    }
+
+    function safeStorageGet(key, fallback) {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+      } catch (e) { return fallback; }
+    }
+    function safeStorageSet(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
+    }
+
+    // --- UHRZEIT, DATUM, TAG/NACHT, WAKE-STATUS ---
+    function updateClock() {
+      const now = new Date();
+      const hours = now.getHours();
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+
+      document.getElementById('live-clock').innerText = `${hours}:${minutes}:${seconds}`;
+
+      const options = { weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit' };
+      document.getElementById('live-date').innerText = now.toLocaleDateString('de-DE', options);
+
+      const modeSpan = document.getElementById('day-time-mode');
+      if (hours >= 6 && hours < 20) {
+        modeSpan.innerText = "Tag";
+        modeSpan.style.color = "#00ff66";
+      } else {
+        modeSpan.innerText = "Nacht";
+        modeSpan.style.color = "#ff0055";
+      }
+
+      const awake = Date.now() < awakeUntil;
+      wakeStatus.innerText = awake ? "AWAKE" : "STANDBY";
+      wakeStatus.style.color = awake ? "#00ff66" : "#ffcc00";
+      blueDot.classList.toggle('awake', awake);
+
+      updateTimerUI();
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // --- 3D THREE.JS HOLOGRAMM ---
+    const threeCanvas = document.getElementById('three-canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, alpha: true, antialias: true });
+    renderer.setSize(220, 220);
+
+    const scene = new THREE.Scene();
+    const camera3D = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    camera3D.position.z = 5;
+
+    const geometry = new THREE.BufferGeometry();
+    const particlesCount = 200;
+    const posArray = new Float32Array(particlesCount * 3);
+
+    for (let i = 0; i < particlesCount * 3; i++) {
+      posArray[i] = (Math.random() - 0.5) * 2.8;
+    }
+    geometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+
+    const material = new THREE.PointsMaterial({
+      size: 0.05,
+      color: 0x00f0ff,
+      transparent: true,
+      opacity: 0.8
+    });
+
+    const particlesMesh = new THREE.Points(geometry, material);
+    scene.add(particlesMesh);
+
+    const ringGeo = new THREE.RingGeometry(1.1, 1.15, 32);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff, side: THREE.DoubleSide, transparent: true, opacity: 0.6 });
+    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+    ringMesh.rotation.x = Math.PI / 3;
+    scene.add(ringMesh);
+
+    function animate3D() {
+      requestAnimationFrame(animate3D);
+      particlesMesh.rotation.y += 0.005;
+      ringMesh.rotation.z -= 0.01;
+      renderer.render(scene, camera3D);
+    }
+    animate3D();
+
+    // --- 1. HAND-TRACKING MIT GLÄTTUNG & VERWEILZEIT ---
+    const SMOOTHING = 0.25;
+    const DWELL_MS = 1500;
+    const WIDGET_COOLDOWN = 8000;
+
+    let smoothX = window.innerWidth / 2;
+    let smoothY = window.innerHeight * 0.45;
+    let smoothScale = 1;
+    let hoverTarget = null;
+    let hoverStart = 0;
+    let lastWidgetTrigger = 0;
+
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 0,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    hands.onResults((results) => {
+      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+      }
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        handStatus.innerText = "DETECTED";
+        handStatus.style.color = "#00ff66";
+
+        const primaryHand = results.multiHandLandmarks[0];
+
+        for (let point of primaryHand) {
+          ctx.beginPath();
+          ctx.arc(point.x * canvas.width, point.y * canvas.height, 4, 0, 2 * Math.PI);
+          ctx.fillStyle = "#00f0ff";
+          ctx.fill();
+        }
+
+        const thumbTip = primaryHand[4];
+        const indexTip = primaryHand[8];
+
+        const targetX = (1 - indexTip.x) * window.innerWidth;
+        const targetY = indexTip.y * window.innerHeight;
+        const pinchDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+        const targetScale = Math.min(Math.max(pinchDist * 6, 0.5), 2.2);
+
+        smoothX += (targetX - smoothX) * SMOOTHING;
+        smoothY += (targetY - smoothY) * SMOOTHING;
+        smoothScale += (targetScale - smoothScale) * SMOOTHING;
+
+        coreWrapper.style.left = `${smoothX}px`;
+        coreWrapper.style.top = `${smoothY}px`;
+        coreWrapper.style.transform = `translate(-50%, -50%) scale(${smoothScale})`;
+
+        checkWidgetHover(smoothX, smoothY);
+
+      } else {
+        handStatus.innerText = "SEARCHING...";
+        handStatus.style.color = "#ffcc00";
+
+        smoothX = window.innerWidth / 2;
+        smoothY = window.innerHeight * 0.45;
+        smoothScale = 1;
+        coreWrapper.style.left = `50%`;
+        coreWrapper.style.top = `45%`;
+        coreWrapper.style.transform = `translate(-50%, -50%) scale(1)`;
+
+        hoverTarget = null;
+        widgetLeft.classList.remove('active-widget');
+        widgetRight.classList.remove('active-widget');
+      }
+    });
+
+    const camera = new Camera(video, {
+      onFrame: async () => { await hands.send({ image: video }); },
+      width: 640,
+      height: 480
+    });
+    camera.start().catch(() => {
+      handStatus.innerText = "NO CAMERA";
+      handStatus.style.color = "#ff0055";
+    });
+
+    function isInside(rect, x, y) {
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    }
+
+    function checkWidgetHover(x, y) {
+      let current = null;
+      if (isInside(widgetLeft.getBoundingClientRect(), x, y)) current = 'left';
+      else if (isInside(widgetRight.getBoundingClientRect(), x, y)) current = 'right';
+
+      widgetLeft.classList.toggle('active-widget', current === 'left');
+      widgetRight.classList.toggle('active-widget', current === 'right');
+
+      const now = Date.now();
+      if (current !== hoverTarget) {
+        hoverTarget = current;
+        hoverStart = now;
+        return;
+      }
+      if (!current) return;
+
+      if (now - hoverStart >= DWELL_MS && now - lastWidgetTrigger > WIDGET_COOLDOWN && !isSpeaking) {
+        lastWidgetTrigger = now;
+        if (current === 'left') {
+          const temp = document.getElementById('temp').innerText;
+          speak(`System aktiv. Temperatur in Aichach liegt bei ${temp}. Es ist aktuell ${document.getElementById('day-time-mode').innerText}.`);
+        } else {
+          const btc = document.getElementById('btc-price').innerText;
+          const sol = document.getElementById('sol-price').innerText;
+          speak(`Marktdaten aufgerufen. Bitcoin steht bei ${btc}, Solana bei${sol}.`);
+        }
+      }
+    }
+
+    // --- 2. WETTER & CRYPTO ---
+    async function fetchWeather() {
+      try {
+        const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=48.4583&longitude=11.1333&current_weather=true');
+        const data = await res.json();
+        document.getElementById('temp').innerText = data.current_weather.temperature + ' °C';
+      } catch (err) {}
+    }
+    fetchWeather();
+    setInterval(fetchWeather, 15 * 60 * 1000);
+
+    async function fetchCryptoPrice(symbol) {
+      try {
+        const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}EUR`);
+        const data = await res.json();
+        if (data.price) {
+          return parseFloat(data.price).toFixed(2);
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    const priceHistory = [];
+    const chartCtx = document.getElementById('cryptoChart').getContext('2d');
+
+    const cryptoChart = new Chart(chartCtx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'BTC/EUR',
+          data: priceHistory,
+          borderColor: '#00f0ff',
+          backgroundColor: 'rgba(0, 240, 255, 0.1)',
+          fill: true,
+          tension: 0.3
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { display: false },
+          y: { grid: { color: 'rgba(0, 240, 255, 0.1)' }, ticks: { color: '#00f0ff', font: { size: 9 } } }
+        }
+      }
+    });
+
+    async function updateCryptoData() {
+      const sol = await fetchCryptoPrice("SOL");
+      const btc = await fetchCryptoPrice("BTC");
+
+      if (sol) document.getElementById('sol-price').innerText = sol + ' €';
+      if (btc) {
+        document.getElementById('btc-price').innerText = btc + ' €';
+
+        const nowStr = new Date().toLocaleTimeString();
+        cryptoChart.data.labels.push(nowStr);
+        cryptoChart.data.datasets[0].data.push(parseFloat(btc));
+
+        if (cryptoChart.data.labels.length > 8) {
+          cryptoChart.data.labels.shift();
+          cryptoChart.data.datasets[0].data.shift();
+        }
+        cryptoChart.update();
+      }
+    }
+    updateCryptoData();
+    setInterval(updateCryptoData, 5000);
+
+    // --- 3. SPEICHER (LOCALSTORAGE) ---
+    let memoryList = safeStorageGet('jarvis_memory', []);
+    let postItList = safeStorageGet('jarvis_postits', []);
+
+    function addNote(text) {
+      memoryList.push(text);
+      safeStorageSet('jarvis_memory', memoryList);
+      updateMemoryUI();
+    }
+    function addPostIt(text) {
+      postItList.push(text);
+      safeStorageSet('jarvis_postits', postItList);
+      updatePostItUI();
+    }
+    function clearMemory() {
+      memoryList = [];
+      postItList = [];
+      safeStorageSet('jarvis_memory', memoryList);
+      safeStorageSet('jarvis_postits', postItList);
+      updateMemoryUI();
+      updatePostItUI();
+    }
+
+    function updateMemoryUI() {
+      setList(document.getElementById('memory-items'), memoryList, 'Keine aktiven Notizen.');
+    }
+    function updatePostItUI() {
+      setList(document.getElementById('postit-items'), postItList, 'Keine Notizen/Rezepte hinterlegt.');
+    }
+    updateMemoryUI();
+    updatePostItUI();
+
+    // --- 4. MUSIK PLAYER ---
+    function playMusic() {
+      bgMusic.volume = 0.3;
+      bgMusic.play().then(() => {
+        musicStatus.innerText = "PLAYING";
+        musicStatus.style.color = "#00ff66";
+        speak("Cyber-Musik-Feed gestartet, Boss.");
+      }).catch(() => {
+        speak("Musik-Stream konnte nicht gestartet werden.");
+      });
+    }
+    function stopMusic() {
+      bgMusic.pause();
+      musicStatus.innerText = "STOPPED";
+      musicStatus.style.color = "#ff0055";
+      speak("Musik pausiert, Boss.");
+    }
+
+    // --- 5. SPRACHAUSGABE ---
+    function speak(text) {
+      isSpeaking = true;
+      blueDot.classList.add('speaking-core');
+
+      if (recognition) {
+        try { recognition.stop(); } catch (e) {}
+      }
+
+      window.speechSynthesis.cancel();
+
+      const cleanText = text.replace(/[*#_`]/g, '').trim();
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      const voices = window.speechSynthesis.getVoices();
+
+      const softVoice = voices.find(v => 
+        v.lang.includes('de') && (
+          v.name.includes('Neural') || v.name.includes('Online') || 
+          v.name.includes('Katja') || v.name.includes('Amala')
+        )
+      ) || voices.find(v => v.lang.includes('de'));
+
+      if (softVoice) utterance.voice = softVoice;
+
+      utterance.lang = 'de-DE';
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+
+      utterance.onend = () => {
+        isSpeaking = false;
+        blueDot.classList.remove('speaking-core');
+        if (isListeningActive && recognition) {
+          setTimeout(() => { try { recognition.start(); } catch (e) {} }, 300);
+        }
+      };
+
+      window.speechSynthesis.speak(utterance);
+    }
+    window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.getVoices(); };
+
+    function speakStatus() {
+      const now = new Date();
+      speak(`Alle Systeme online, Boss. Es ist ${now.getHours()} Uhr ${now.getMinutes()} und wir haben aktuell ${document.getElementById('day-time-mode').innerText}.`);
+    }
+
+    // --- 6. KI ANBINDUNG & REZEPT-GENERIERUNG ---
+    async function askAI(promptText) {
+      try {
+        const fullPrompt = `Du bist JARVIS, eine extrem smarte Sci-Fi KI. Antworte kurz, humorvoll und direkt in maximal 1 bis 2 Sätzen auf Deutsch. Verwende KEINE Sonderzeichen. Sprich den Nutzer gelegentlich mit 'Boss' an.\n\nFrage: ${promptText}`;
+        const response = await puter.ai.chat(fullPrompt);
+        let textResponse = "";
+        if (typeof response === "string") textResponse = response;
+        else if (response?.message?.content) textResponse = response.message.content;
+        else if (response?.toString) textResponse = response.toString();
+
+        if (textResponse) speak(textResponse);
+        else speak("Keine Antwort erhalten, Boss.");
+      } catch (error) {
+        speak("Verbindung zur KI unterbrochen, Boss.");
+      }
+    }
+
+    async function generateRecipe(dish) {
+      try {
+        const fullPrompt = `Erstelle ein ultra-kurzes Rezept für ${dish} mit den 3 wichtigsten Schritten auf Deutsch. Max 2 Sätze.`;
+        const response = await puter.ai.chat(fullPrompt);
+        let recipe = typeof response === "string" ? response : (response?.message?.content || "Rezept erfolgreich geladen.");
+        addPostIt(`🍳 ${dish.toUpperCase()}: ${recipe}`);
+        speak(`Rezept für ${dish} wurde als Post-it im HUD hinterlegt, Boss.`);
+      } catch (e) {
+        addPostIt(`🍳 ${dish}: Schnell zubereiten und genießen!`);
+        speak(`Rezept für ${dish} hinzugefügt, Boss.`);
+      }
+    }
+
+    // --- 7. SPRACHERKENNUNG & WAKE-WORD LOGIK ---
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      recognition.lang = 'de-DE';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      recognition.onstart = () => {
+        voiceStatus.innerText = "LISTENING";
+        voiceStatus.style.color = "#00ff66";
+      };
+
+      recognition.onend = () => {
+        if (isListeningActive && !isSpeaking) {
+          setTimeout(() => { try { recognition.start(); } catch (e) {} }, 300);
+        } else if (!isListeningActive) {
+          voiceStatus.innerText = "OFFLINE";
+          voiceStatus.style.color = "#ffcc00";
+        }
+      };
+
+      recognition.onresult = async (event) => {
+        if (isSpeaking) return;
+
+        const rawText = event.results[0][0].transcript.toLowerCase().trim();
+        heardTxt.innerText = rawText;
+
+        const hasWakeWord = WAKE_REGEX.test(rawText);
+        if (hasWakeWord) {
+          awakeUntil = Date.now() + WAKE_WINDOW;
+        }
+
+        const isAwake = Date.now() < awakeUntil;
+        if (!isAwake && !hasWakeWord) {
+          return; // Ignorieren, solange "Jarvis" nicht gesagt wurde
+        }
+
+        // Befehl ohne Wake-Word extrahieren
+        const cleanText = rawText.replace(WAKE_REGEX, '').trim();
+
+        // Befehle verarbeiten
+        if (/uhrzeit|spät|uhr/.test(cleanText)) {
+          const now = new Date();
+          speak(`Es ist jetzt ${now.getHours()} Uhr ${now.getMinutes()}, Boss.`);
+        }
+        else if (/datum|tag|heute/.test(cleanText)) {
+          const now = new Date();
+          speak(`Heute ist ${now.toLocaleDateString('de-DE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}, Boss.`);
+        }
+        else if (/rezept|kochbuch/.test(cleanText)) {
+          const dish = cleanText.replace(/suche rezept für|rezept für|rezept/g, '').trim() || "Überraschungsgericht";
+          await generateRecipe(dish);
+        }
+        else if (/timer|wecker/.test(cleanText)) {
+          const mins = parseNumber(cleanText) || 5;
+          addTimer(mins, cleanText);
+        }
+        else if (/spiel musik|mach musik|musik an|starte sound|radio an/.test(cleanText)) {
+          playMusic();
+        }
+        else if (/musik aus|stopp musik|musik stopp|stopp den sound|radio aus|ruhe/.test(cleanText)) {
+          stopMusic();
+        }
+        else if (/lösche|leeren|vergiss|weg/.test(cleanText)) {
+          clearMemory();
+          speak("Alle Notizen und Post-its wurden gelöscht, Boss.");
+        }
+        else if (/notiz|notiere|merk dir|erinnere mich|schreib auf/.test(cleanText)) {
+          const note = cleanText.replace(/mach eine notiz|notiz|notiere|merk dir|erinnere mich an|erinnere mich|schreib das auf|schreib auf/g, '').trim();
+          if (note.length > 1) {
+            addNote(note);
+            speak(`Verstanden, Boss. Notiz gespeichert: ${note}`);
+          }
+        }
+        else if (/was hast du dir gemerkt|notizen vorlesen|welche notizen/.test(cleanText)) {
+          if (memoryList.length > 0) speak(`Deine Notizen: ${memoryList.join(", ")}.`);
+          else speak("Der Speicher ist aktuell leer, Boss.");
+        }
+        else if (/wetter/.test(cleanText)) {
+          const temp = document.getElementById('temp').innerText;
+          speak(`Das Wetter in Aichach beträgt aktuell ${temp}, Boss.`);
+        }
+        else if (/bitcoin|btc/.test(cleanText)) {
+          const p = await fetchCryptoPrice("BTC");
+          if (p) speak(`Bitcoin liegt bei ${p} Euro, Boss.`);
+          else speak("Konnte den Kurs nicht abrufen.");
+        }
+        else if (/solana|sol/.test(cleanText)) {
+          const p = await fetchCryptoPrice("SOL");
+          if (p) speak(`Solana liegt bei ${p} Euro, Boss.`);
+          else speak("Konnte den Kurs nicht abrufen.");
+        }
+        else if (/status|hallo jarvis/.test(cleanText)) {
+          speakStatus();
+        }
+        else if (cleanText.length > 2) {
+          askAI(cleanText);
+        }
+      };
+    }
+
+    function startListening() {
+      if (recognition) {
+        isListeningActive = true;
+        try { recognition.start(); } catch (e) {}
+        speak("Hallo Boss! Alle Systeme laufen einwandfrei auf 100 Prozent. Sie sehen heute wie immer verdammt gut aus. Was steht als Nächstes an?");
+      }
+    }
+  </script>
+</body>
+</html>
