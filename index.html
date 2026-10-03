@@ -323,42 +323,12 @@
     let recognition;
     let isSpeaking = false;
     let isListeningActive = false;
+    let speakToken = 0;
 
     const WAKE_WINDOW = 8000;
     const WAKE_REGEX = /\b(jarvis|jarwis|dscharvis|charvis|jarviss)\b/;
     let awakeUntil = 0;
 
-    // --- TIMER SPEICHER & DATEN ---
-    let activeTimers = [];
-
-    function addTimer(minutes, label) {
-      const endTime = Date.now() + minutes * 60 * 1000;
-      activeTimers.push({ endTime, label });
-      speak(`Timer für ${minutes} Minuten (${label}) gestartet, Boss.`);
-      updateTimerUI();
-    }
-
-    function updateTimerUI() {
-      const ul = document.getElementById('timer-items');
-      const now = Date.now();
-      activeTimers = activeTimers.filter(t => t.endTime > now);
-
-      ul.innerHTML = '';
-      if (activeTimers.length === 0) {
-        ul.innerHTML = '<li>Keine aktiven Timer.</li>';
-      } else {
-        activeTimers.forEach(t => {
-          const remainingSec = Math.ceil((t.endTime - now) / 1000);
-          const m = Math.floor(remainingSec / 60);
-          const s = remainingSec % 60;
-          const li = document.createElement('li');
-          li.textContent = `⏱ ${t.label}: ${m}m${s}s verbleibend`;
-          ul.appendChild(li);
-        });
-      }
-    }
-
-    // --- HILFSFUNKTIONEN ---
     const NUM_WORDS = {
       eins: 1, ein: 1, eine: 1, einen: 1, zwei: 2, drei: 3, vier: 4, fünf: 5, sechs: 6,
       sieben: 7, acht: 8, neun: 9, zehn: 10, elf: 11, zwölf: 12, fünfzehn: 15,
@@ -384,7 +354,16 @@
       try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
     }
 
-    // --- UHRZEIT, DATUM, TAG/NACHT, WAKE-STATUS ---
+    function setList(ul, items, emptyText) {
+      ul.innerHTML = '';
+      const entries = items.length ? items : [emptyText];
+      entries.forEach(text => {
+        const li = document.createElement('li');
+        li.textContent = text;
+        ul.appendChild(li);
+      });
+    }
+
     function updateClock() {
       const now = new Date();
       const hours = now.getHours();
@@ -415,7 +394,6 @@
     setInterval(updateClock, 1000);
     updateClock();
 
-    // --- 3D THREE.JS HOLOGRAMM ---
     const threeCanvas = document.getElementById('three-canvas');
     const renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, alpha: true, antialias: true });
     renderer.setSize(220, 220);
@@ -457,7 +435,6 @@
     }
     animate3D();
 
-    // --- 1. HAND-TRACKING MIT GLÄTTUNG & VERWEILZEIT ---
     const SMOOTHING = 0.25;
     const DWELL_MS = 1500;
     const WIDGET_COOLDOWN = 8000;
@@ -573,12 +550,11 @@
         } else {
           const btc = document.getElementById('btc-price').innerText;
           const sol = document.getElementById('sol-price').innerText;
-          speak(`Marktdaten aufgerufen. Bitcoin steht bei ${btc}, Solana bei${sol}.`);
+          speak(`Marktdaten aufgerufen. Bitcoin steht bei ${btc}, Solana bei ${sol}.`);
         }
       }
     }
 
-    // --- 2. WETTER & CRYPTO ---
     async function fetchWeather() {
       try {
         const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=48.4583&longitude=11.1333&current_weather=true');
@@ -588,6 +564,20 @@
     }
     fetchWeather();
     setInterval(fetchWeather, 15 * 60 * 1000);
+
+    async function fetchCityWeather(city) {
+      try {
+        const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&language=de&count=1`);
+        const geoData = await geoRes.json();
+        if (geoData.results && geoData.results[0]) {
+          const { latitude, longitude, name } = geoData.results[0];
+          const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`);
+          const wData = await wRes.json();
+          return `Das aktuelle Wetter in ${name} beträgt ${wData.current_weather.temperature} Grad.`;
+        }
+      } catch (e) {}
+      return null;
+    }
 
     async function fetchCryptoPrice(symbol) {
       try {
@@ -600,7 +590,6 @@
       return null;
     }
 
-    const priceHistory = [];
     const chartCtx = document.getElementById('cryptoChart').getContext('2d');
 
     const cryptoChart = new Chart(chartCtx, {
@@ -608,280 +597,262 @@
       data: {
         labels: [],
         datasets: [{
-          label: 'BTC/EUR',
-          data: priceHistory,
-          borderColor: '#00f0ff',
-          backgroundColor: 'rgba(0, 240, 255, 0.1)',
-          fill: true,
-          tension: 0.3
+          label: 'SOL/EUR',
+          data: [],
+          borderColor: '#00ff66',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.1
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
         scales: {
           x: { display: false },
           y: { grid: { color: 'rgba(0, 240, 255, 0.1)' }, ticks: { color: '#00f0ff', font: { size: 9 } } }
-        }
+        },
+        plugins: { legend: { display: false } }
       }
     });
 
     async function updateCryptoData() {
-      const sol = await fetchCryptoPrice("SOL");
-      const btc = await fetchCryptoPrice("BTC");
+      const sol = await fetchCryptoPrice('SOL');
+      const btc = await fetchCryptoPrice('BTC');
 
-      if (sol) document.getElementById('sol-price').innerText = sol + ' €';
-      if (btc) {
-        document.getElementById('btc-price').innerText = btc + ' €';
-
+      if (sol) {
+        document.getElementById('sol-price').innerText = sol + ' €';
         const nowStr = new Date().toLocaleTimeString();
-        cryptoChart.data.labels.push(nowStr);
-        cryptoChart.data.datasets[0].data.push(parseFloat(btc));
-
-        if (cryptoChart.data.labels.length > 8) {
+        if (cryptoChart.data.labels.length > 15) {
           cryptoChart.data.labels.shift();
           cryptoChart.data.datasets[0].data.shift();
         }
-        cryptoChart.update();
+        cryptoChart.data.labels.push(nowStr);
+        cryptoChart.data.datasets[0].data.push(parseFloat(sol));
+        cryptoChart.update('none');
+      }
+      if (btc) {
+        document.getElementById('btc-price').innerText = btc + ' €';
       }
     }
     updateCryptoData();
-    setInterval(updateCryptoData, 5000);
+    setInterval(updateCryptoData, 10000);
 
-    // --- 3. SPEICHER (LOCALSTORAGE) ---
-    let memoryList = safeStorageGet('jarvis_memory', []);
-    let postItList = safeStorageGet('jarvis_postits', []);
+    let activeTimers = [];
 
-    function addNote(text) {
-      memoryList.push(text);
-      safeStorageSet('jarvis_memory', memoryList);
-      updateMemoryUI();
-    }
-    function addPostIt(text) {
-      postItList.push(text);
-      safeStorageSet('jarvis_postits', postItList);
-      updatePostItUI();
-    }
-    function clearMemory() {
-      memoryList = [];
-      postItList = [];
-      safeStorageSet('jarvis_memory', memoryList);
-      safeStorageSet('jarvis_postits', postItList);
-      updateMemoryUI();
-      updatePostItUI();
+    function addTimer(durationSec, label) {
+      const endTime = Date.now() + durationSec * 1000;
+      activeTimers.push({ endTime, label });
+      updateTimerUI();
     }
 
-    function updateMemoryUI() {
-      setList(document.getElementById('memory-items'), memoryList, 'Keine aktiven Notizen.');
-    }
-    function updatePostItUI() {
-      setList(document.getElementById('postit-items'), postItList, 'Keine Notizen/Rezepte hinterlegt.');
-    }
-    updateMemoryUI();
-    updatePostItUI();
+    function updateTimerUI() {
+      const ul = document.getElementById('timer-items');
+      const now = Date.now();
+      activeTimers = activeTimers.filter(t => t.endTime > now);
 
-    // --- 4. MUSIK PLAYER ---
-    function playMusic() {
-      bgMusic.volume = 0.3;
-      bgMusic.play().then(() => {
-        musicStatus.innerText = "PLAYING";
-        musicStatus.style.color = "#00ff66";
-        speak("Cyber-Musik-Feed gestartet, Boss.");
-      }).catch(() => {
-        speak("Musik-Stream konnte nicht gestartet werden.");
+      if (activeTimers.length === 0) {
+        ul.innerHTML = '<li>Keine aktiven Timer.</li>';
+        return;
+      }
+      ul.innerHTML = '';
+      activeTimers.forEach(t => {
+        const remaining = Math.ceil((t.endTime - now) / 1000);
+        const li = document.createElement('li');
+        li.textContent = `${t.label}: noch ${remaining}s`;
+        ul.appendChild(li);
+        if (remaining <= 1 && !t.alerted) {
+          t.alerted = true;
+          speak(`Timer ${t.label} ist abgelaufen.`);
+        }
       });
     }
-    function stopMusic() {
-      bgMusic.pause();
-      musicStatus.innerText = "STOPPED";
-      musicStatus.style.color = "#ff0055";
-      speak("Musik pausiert, Boss.");
-    }
 
-    // --- 5. SPRACHAUSGABE ---
+    let postIts = safeStorageGet('jarvis_postits', []);
+    let memoryNotes = safeStorageGet('jarvis_memory', []);
+
+    function refreshUILists() {
+      setList(document.getElementById('memory-items'), memoryNotes, 'Keine aktiven Notizen.');
+      setList(document.getElementById('postit-items'), postIts, 'Keine Notizen/Rezepte hinterlegt.');
+    }
+    refreshUILists();
+
     function speak(text) {
-      isSpeaking = true;
-      blueDot.classList.add('speaking-core');
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'de-DE';
+        utterance.rate = 1.0;
+        isSpeaking = true;
+        blueDot.classList.add('speaking-core');
+        const token = ++speakToken;
 
-      if (recognition) {
-        try { recognition.stop(); } catch (e) {}
+        utterance.onend = () => {
+          if (speakToken === token) {
+            isSpeaking = false;
+            blueDot.classList.remove('speaking-core');
+          }
+        };
+        utterance.onerror = () => {
+          if (speakToken === token) {
+            isSpeaking = false;
+            blueDot.classList.remove('speaking-core');
+          }
+        };
+        window.speechSynthesis.speak(utterance);
       }
-
-      window.speechSynthesis.cancel();
-
-      const cleanText = text.replace(/[*#_`]/g, '').trim();
-      const utterance = new SpeechSynthesisUtterance(cleanText);
-      const voices = window.speechSynthesis.getVoices();
-
-      const softVoice = voices.find(v => 
-        v.lang.includes('de') && (
-          v.name.includes('Neural') || v.name.includes('Online') || 
-          v.name.includes('Katja') || v.name.includes('Amala')
-        )
-      ) || voices.find(v => v.lang.includes('de'));
-
-      if (softVoice) utterance.voice = softVoice;
-
-      utterance.lang = 'de-DE';
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
-
-      utterance.onend = () => {
-        isSpeaking = false;
-        blueDot.classList.remove('speaking-core');
-        if (isListeningActive && recognition) {
-          setTimeout(() => { try { recognition.start(); } catch (e) {} }, 300);
-        }
-      };
-
-      window.speechSynthesis.speak(utterance);
     }
-    window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.getVoices(); };
 
     function speakStatus() {
-      const now = new Date();
-      speak(`Alle Systeme online, Boss. Es ist ${now.getHours()} Uhr ${now.getMinutes()} und wir haben aktuell ${document.getElementById('day-time-mode').innerText}.`);
+      const timeStr = document.getElementById('live-clock').innerText;
+      const temp = document.getElementById('temp').innerText;
+      speak(`System online. Es ist ${timeStr}. Temperatur in Aichach beträgt ${temp}. Alle Module einsatzbereit.`);
     }
 
-    // --- 6. KI ANBINDUNG & REZEPT-GENERIERUNG ---
-    async function askAI(promptText) {
-      try {
-        const fullPrompt = `Du bist JARVIS, eine extrem smarte Sci-Fi KI. Antworte kurz, humorvoll und direkt in maximal 1 bis 2 Sätzen auf Deutsch. Verwende KEINE Sonderzeichen. Sprich den Nutzer gelegentlich mit 'Boss' an.\n\nFrage: ${promptText}`;
-        const response = await puter.ai.chat(fullPrompt);
-        let textResponse = "";
-        if (typeof response === "string") textResponse = response;
-        else if (response?.message?.content) textResponse = response.message.content;
-        else if (response?.toString) textResponse = response.toString();
-
-        if (textResponse) speak(textResponse);
-        else speak("Keine Antwort erhalten, Boss.");
-      } catch (error) {
-        speak("Verbindung zur KI unterbrochen, Boss.");
+    function startListening() {
+      if (!('webkitSpeechRecognition' in window)) {
+        alert('Spracherkennung wird von diesem Browser nicht unterstützt. Bitte Chrome verwenden.');
+        return;
       }
-    }
 
-    async function generateRecipe(dish) {
-      try {
-        const fullPrompt = `Erstelle ein ultra-kurzes Rezept für ${dish} mit den 3 wichtigsten Schritten auf Deutsch. Max 2 Sätze.`;
-        const response = await puter.ai.chat(fullPrompt);
-        let recipe = typeof response === "string" ? response : (response?.message?.content || "Rezept erfolgreich geladen.");
-        addPostIt(`🍳 ${dish.toUpperCase()}: ${recipe}`);
-        speak(`Rezept für ${dish} wurde als Post-it im HUD hinterlegt, Boss.`);
-      } catch (e) {
-        addPostIt(`🍳 ${dish}: Schnell zubereiten und genießen!`);
-        speak(`Rezept für ${dish} hinzugefügt, Boss.`);
-      }
-    }
+      if (isListeningActive) return;
 
-    // --- 7. SPRACHERKENNUNG & WAKE-WORD LOGIK ---
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    if (SpeechRecognition) {
-      recognition = new SpeechRecognition();
+      recognition = new webkitSpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
       recognition.lang = 'de-DE';
-      recognition.continuous = false;
-      recognition.interimResults = false;
 
       recognition.onstart = () => {
-        voiceStatus.innerText = "LISTENING";
+        isListeningActive = true;
+        voiceStatus.innerText = "ONLINE";
         voiceStatus.style.color = "#00ff66";
-      };
-
-      recognition.onend = () => {
-        if (isListeningActive && !isSpeaking) {
-          setTimeout(() => { try { recognition.start(); } catch (e) {} }, 300);
-        } else if (!isListeningActive) {
-          voiceStatus.innerText = "OFFLINE";
-          voiceStatus.style.color = "#ffcc00";
-        }
       };
 
       recognition.onresult = async (event) => {
         if (isSpeaking) return;
 
-        const rawText = event.results[0][0].transcript.toLowerCase().trim();
-        heardTxt.innerText = rawText;
-
-        const hasWakeWord = WAKE_REGEX.test(rawText);
-        if (hasWakeWord) {
-          awakeUntil = Date.now() + WAKE_WINDOW;
-        }
-
-        const isAwake = Date.now() < awakeUntil;
-        if (!isAwake && !hasWakeWord) {
-          return; // Ignorieren, solange "Jarvis" nicht gesagt wurde
-        }
-
-        // Befehl ohne Wake-Word extrahieren
-        const cleanText = rawText.replace(WAKE_REGEX, '').trim();
-
-        // Befehle verarbeiten
-        if (/uhrzeit|spät|uhr/.test(cleanText)) {
-          const now = new Date();
-          speak(`Es ist jetzt ${now.getHours()} Uhr ${now.getMinutes()}, Boss.`);
-        }
-        else if (/datum|tag|heute/.test(cleanText)) {
-          const now = new Date();
-          speak(`Heute ist ${now.toLocaleDateString('de-DE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}, Boss.`);
-        }
-        else if (/rezept|kochbuch/.test(cleanText)) {
-          const dish = cleanText.replace(/suche rezept für|rezept für|rezept/g, '').trim() || "Überraschungsgericht";
-          await generateRecipe(dish);
-        }
-        else if (/timer|wecker/.test(cleanText)) {
-          const mins = parseNumber(cleanText) || 5;
-          addTimer(mins, cleanText);
-        }
-        else if (/spiel musik|mach musik|musik an|starte sound|radio an/.test(cleanText)) {
-          playMusic();
-        }
-        else if (/musik aus|stopp musik|musik stopp|stopp den sound|radio aus|ruhe/.test(cleanText)) {
-          stopMusic();
-        }
-        else if (/lösche|leeren|vergiss|weg/.test(cleanText)) {
-          clearMemory();
-          speak("Alle Notizen und Post-its wurden gelöscht, Boss.");
-        }
-        else if (/notiz|notiere|merk dir|erinnere mich|schreib auf/.test(cleanText)) {
-          const note = cleanText.replace(/mach eine notiz|notiz|notiere|merk dir|erinnere mich an|erinnere mich|schreib das auf|schreib auf/g, '').trim();
-          if (note.length > 1) {
-            addNote(note);
-            speak(`Verstanden, Boss. Notiz gespeichert: ${note}`);
+        let interim = '';
+        let final = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            final += event.results[i][0].transcript;
+          } else {
+            interim += event.results[i][0].transcript;
           }
         }
-        else if (/was hast du dir gemerkt|notizen vorlesen|welche notizen/.test(cleanText)) {
-          if (memoryList.length > 0) speak(`Deine Notizen: ${memoryList.join(", ")}.`);
-          else speak("Der Speicher ist aktuell leer, Boss.");
+
+        const heard = (final || interim).toLowerCase().trim();
+        if (heard) {
+          heardTxt.innerText = heard;
         }
-        else if (/wetter/.test(cleanText)) {
-          const temp = document.getElementById('temp').innerText;
-          speak(`Das Wetter in Aichach beträgt aktuell ${temp}, Boss.`);
-        }
-        else if (/bitcoin|btc/.test(cleanText)) {
-          const p = await fetchCryptoPrice("BTC");
-          if (p) speak(`Bitcoin liegt bei ${p} Euro, Boss.`);
-          else speak("Konnte den Kurs nicht abrufen.");
-        }
-        else if (/solana|sol/.test(cleanText)) {
-          const p = await fetchCryptoPrice("SOL");
-          if (p) speak(`Solana liegt bei ${p} Euro, Boss.`);
-          else speak("Konnte den Kurs nicht abrufen.");
-        }
-        else if (/status|hallo jarvis/.test(cleanText)) {
-          speakStatus();
-        }
-        else if (cleanText.length > 2) {
-          askAI(cleanText);
+
+        if (final) {
+          const now = Date.now();
+          if (WAKE_REGEX.test(final)) {
+            awakeUntil = now + WAKE_WINDOW;
+            speak('Ja, Boss?');
+            return;
+          }
+
+          if (now < awakeUntil) {
+            awakeUntil = now + WAKE_WINDOW;
+            await processCommand(final.toLowerCase());
+          }
         }
       };
+
+      recognition.onerror = () => {};
+      recognition.onend = () => {
+        isListeningActive = false;
+        voiceStatus.innerText = "OFFLINE";
+        voiceStatus.style.color = "#ffcc00";
+        setTimeout(() => {
+          try { recognition.start(); } catch(e) {}
+        }, 1000);
+      };
+
+      try {
+        recognition.start();
+      } catch (e) {}
     }
 
-    function startListening() {
-      if (recognition) {
-        isListeningActive = true;
-        try { recognition.start(); } catch (e) {}
-        speak("Hallo Boss! Alle Systeme laufen einwandfrei auf 100 Prozent. Sie sehen heute wie immer verdammt gut aus. Was steht als Nächstes an?");
+    async function processCommand(cmd) {
+      if (cmd.includes('wie spät ist es') || cmd.includes('uhrzeit')) {
+        const timeStr = document.getElementById('live-clock').innerText;
+        speak(`Es ist jetzt ${timeStr}.`);
+      } 
+      else if (cmd.includes('welcher tag') || cmd.includes('datum')) {
+        const dateStr = document.getElementById('live-date').innerText;
+        speak(`Heute ist der ${dateStr}.`);
+      }
+      else if (cmd.includes('musik an') || cmd.includes('radio')) {
+        bgMusic.play().then(() => {
+          musicStatus.innerText = 'ON';
+          musicStatus.style.color = '#00ff66';
+          speak('Musik-Stream gestartet.');
+        }).catch(() => {
+          speak('Konnte Musik nicht starten.');
+        });
+      }
+      else if (cmd.includes('musik aus') || cmd.includes('stumm')) {
+        bgMusic.pause();
+        musicStatus.innerText = 'OFF';
+        musicStatus.style.color = '#ff0055';
+        speak('Musik gestoppt.');
+      }
+      else if (cmd.includes('timer auf')) {
+        const mins = parseNumber(cmd) || 5;
+        addTimer(mins * 60, `${mins} Min Timer`);
+        speak(`Timer für ${mins} Minuten gestellt.`);
+      }
+      else if (cmd.includes('rezept für') || cmd.includes('koche')) {
+        const dish = cmd.replace(/jarvis/g, '').replace('rezept für', '').replace('koche', '').trim();
+        speak(`Generiere KI-Rezept für ${dish}...`);
+        try {
+          const res = await puter.ai.chat(`Erstelle ein kurzes, knackiges Rezept für ${dish} auf Deutsch mit Zutaten und Schritten.`);
+          const recipeText = res?.message?.content || res || 'Kein Rezept erhalten.';
+          postIts.push(`Rezept: ${dish} -> ${recipeText}`);
+          safeStorageSet('jarvis_postits', postIts);
+          refreshUILists();
+          speak(`Rezept für ${dish} wurde auf das HUD geladen.`);
+        } catch (e) {
+          speak('Fehler bei der KI-Generierung.');
+        }
+      }
+      else if (cmd.includes('notiz') || cmd.includes('merke dir')) {
+        const note = cmd.replace(/jarvis/g, '').replace('merke dir', '').replace('notiz', '').trim();
+        if (note) {
+          memoryNotes.push(note);
+          safeStorageSet('jarvis_memory', memoryNotes);
+          refreshUILists();
+          speak('Notiz gespeichert.');
+        }
+      }
+      else if (cmd.includes('post-its löschen') || cmd.includes('notizen löschen')) {
+        postIts = [];
+        memoryNotes = [];
+        safeStorageSet('jarvis_postits', postIts);
+        safeStorageSet('jarvis_memory', memoryNotes);
+        refreshUILists();
+        speak('Alle Notizen und Post-its wurden gelöscht.');
+      }
+      else if (cmd.includes('wetter in')) {
+        const city = cmd.split('wetter in')[1]?.trim();
+        if (city) {
+          const wMsg = await fetchCityWeather(city);
+          if (wMsg) speak(wMsg);
+          else speak(`Konnte das Wetter für ${city} nicht abrufen.`);
+        }
+      }
+      else {
+        try {
+          speak('Verarbeite Anfrage...');
+          const res = await puter.ai.chat(cmd);
+          const answer = res?.message?.content || res || 'Keine Antwort.';
+          speak(answer);
+        } catch (e) {
+          speak('Befehl verstanden, aber KI-Antwort fehlgeschlagen.');
+        }
       }
     }
   </script>
